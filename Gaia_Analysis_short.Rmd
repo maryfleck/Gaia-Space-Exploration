@@ -1,0 +1,443 @@
+---
+title: "Analysis of Data from Gaia Space Mission"
+author: "Mary Fleck"
+date: "March 23, 2019"
+output: html_document
+---
+
+This analysis explores data from Gaia Space Mission. The Gaia satellite was commissioned by the European Space Agency to survey over 1 billion stars. The Gaia satellite collects 30 times as much light as its predecessor, Hipparcos, making possible astrometric, photometric, and spectroscopic data that are 200 times more accurate. With this feat comes the steep challenge of processing, manipulating and interpreting the results - three data releases, each larger than the last, released over the span of the seven year mission. The data analyzed here comes from the second data release in 2018. Each observation represents a star. 
+
+Variables (in layman's terms): 
+Right Ascension and Declination - positional information for star
+Parallax - apparent shift of position (indicative of distance)
+Proper motion - movement of a star across background space in respect to RA & Dec
+Magnitude - the brightness of the star
+Flux - energy emitted per unit area - different variables give flux with peak sensitivity at different wavelengths
+Error terms give error for all of the above variables
+Radial Velocity - movement of a star around the detecting object 
+Luminosity - amount of energy emitted from a star per unit of time
+
+More information about the data can be found at https://sci.esa.int/web/gaia.
+
+This code sample specifically showcases three portions of the analysis that helped me to answer the following research question:
+
+In what ways are the relationships between quantities measured by Gaia made evident in the data? 
+  How are well-understood dependencies represented in the data? 
+  In what ways can less-familiar relationships be expressed?
+  
+Three samples are used - one taken from an "pencil-beam" observation from the satellite into the galactic plane, perpendicular to the galactic plane, and mid-way out of the galactic plane. Since there is a much more dense composition of stars in the galactic plain, there is expected to be a greater range of types of stars in this sample than in the others. In some parts, it is useful to compare these samples. In others, we are interested in looking at all of the observations as a whole.
+
+
+
+```{r, include=FALSE}
+library(purrr)
+library(tidyverse)
+library(tree)
+```
+
+## Cleaning
+
+The following are functions to aid in preparing the raw data for analysis.
+
+Remove units (first row) and convert data to numeric
+
+```{r}
+remove_units <- function(df){
+  units <- df[1,] # store units
+  df <- df[-c(1:2),] 
+  map_df(df, function(x) as.numeric(as.character(x)))
+}
+```
+
+
+Get complete cases (remove any entries with an NA in any position)
+
+```{r}
+get_cc <- function(df){
+  cc <- complete.cases(df) 
+  df[cc,]
+}
+```
+
+Remove duplicates (as per dup column)
+
+```{r}
+remove_dup <- function(df){
+  dups <- df$Dup == 1
+  df[!dups,]
+}
+```
+
+Find Tukey Outliers
+
+```{r}
+find_outliers <- function(col){
+    num5 <- fivenum(col) 
+    spread4 <- num5[4] - num5[2] 
+    step <- 2*spread4
+    outerfence_Upper <- num5[4] + step
+    outerfence_Lower <- num5[2] - step
+
+    outliers <- which(col < outerfence_Lower | col > outerfence_Upper)
+    outliers
+}
+```
+
+
+Basic cleaning function - report and output
+
+```{r}
+clean_report <- function(df){
+  df0 <- remove_units(df)
+  cat(nrow(df0), "raw rows", "\n")
+  df1 <- remove_dup(df0)
+  cat(nrow(df1), "without duplicates", "\n") 
+  df2 <- get_cc(df1)
+  cat(nrow(df2), "complete cases", "\n")
+  ggplot(df2, aes(RA_ICRS, DE_ICRS)) + geom_point() + ggtitle("Coordinates of Complete Cases") + xlab("Right Ascension") + ylab("Declination")
+}
+```
+
+```{r}
+clean_df <- function(df){
+  df0 <- remove_units(df) 
+  df1 <- remove_dup(df0)
+  df1
+}
+```
+
+
+
+### Plane Data Set (Set 1)
+
+Data observed in the galactic plane.
+
+```{r}
+plane <- read.csv2("C:\\Users\\MaryF\\OneDrive\\Documents\\Spring Semester 2019\\Honors Project\\plane.tsv")
+head(plane)
+plane <- plane[,4:37] #narrow to columns we care about
+clean_report(plane)
+plane_clean <- clean_df(plane)
+plane_cc <- get_cc(plane_clean)
+```
+
+
+There are 1255 cases in this sample where there are not any NA values. In plotting these values, it is notable that the observations are randomly spread throughout the field of view of the satellite. This indicates that there was not a systematic error in observation that prevented collection of parameter data for some observations.
+
+
+
+### Mid-plane Data Set (Set 2)
+
+Data observed from midway out of the galactic plane.
+
+
+```{r}
+mid <- read.csv2("C:\\Users\\MaryF\\OneDrive\\Documents\\Spring Semester 2019\\Honors Project\\midplane.tsv")
+head(mid)
+```
+
+
+```{r}
+clean_report(mid)
+mid_clean <- clean_df(mid)
+mid_cc <- get_cc(mid_clean)
+```
+
+There are 1307 cases in this sample where there are not any NA values. Just as with the plane sample, we note that the observations are randomly spread throughout the field of view of the satellite.
+
+
+### Perpendicular data set (Set 3)
+
+Data observed perpendicularly to the galactic plane.
+
+
+```{r}
+perp <- read.csv2("C:\\Users\\MaryF\\OneDrive\\Documents\\Spring Semester 2019\\Honors Project\\perp.tsv")
+head(perp)
+```
+
+```{r}
+clean_report(perp)
+perp_clean <- clean_df(perp)
+perp_cc <- get_cc(perp_clean)
+```
+
+
+There are 1335 cases in this sample where there are not any NA values. Just as with the above samples, we note that the observations are randomly spread throughout the field of view of the satellite.
+
+
+### Combine the three data sets
+
+The numbers of complete cases are very comparable for each sample (~1300 each), which ensures that analysis performed with the combined data set will not be disproportionately representative of one sample.
+
+```{r}
+c1 <- mutate(plane_cc, sample = 1)
+c2 <- mutate(mid_cc, sample=2)
+c3 <- mutate(perp_cc, sample=3)
+all <- rbind(c1, c2, c3)
+head(all)
+all <- map_df(all, function(x) as.numeric(as.character(x)))
+head(all)
+```
+
+Plot coordinates in 2D
+
+```{r}
+ggplot(all, aes(RA_ICRS, DE_ICRS, color=sample))+ geom_point() + ggtitle("Coordinates of Complete Cases - Combined") + xlab("Right Ascension") + ylab("Declination")
+```
+
+
+This plot demonstrates the spatial relationship between the samples. The samples are plotted using the galactic coordinates of each observation. 
+
+In this plot, the bottom right corner of the plot would be the center of the galactic plane, and the reader can imagine a beam cast from that center out to each circle. This is one way to imagine how Gaia collects stellar data.
+
+In order for each of the samples to contain a similar number of complete cases, a smaller aperture (diameter field of view) sample needed to be taken from the galactic plane because there is such a large concentration of stars there. Outside of the galactic plane, however, stars are not observed as densely, so wider aperture samples are taken. 
+
+
+
+#Analysis
+## Part 1: Magnitude and Flux
+
+
+For part 1 of this analysis, I seek to compare the relationship between magnitude (Gmag), which is the brightness of the star, and flux (FRP), which is the energy emitted per unit area, across samples. 
+
+Since I seek to compare this relationship across samples, the code is written functionally.
+
+I begin by expressing the relationship on a scatter plot. Magnitude and flux have a log relationship.
+
+```{r}
+mag_flux <- function(df, title){
+  plot <- ggplot(df, aes(FRP, Gmag)) + geom_point() + stat_smooth(method='nls', method.args = list(start = c(a=1, b=1)), formula=y~a*log(x)+b, se=F) + ggtitle(paste(title, '- Flux vs. Magnitude')) + xlab("Flux") + ylab("Magnitude")
+  print(plot)
+}
+```
+
+In order to best analyze the quality of the fit, I transform the data and then analyze the relationship as if it were linear.
+
+I then fit a linear model and analyze the residuals. How much deviation is there from this model? Does the log relationship explain the variation in flux?
+
+Based on what the science tells us about magnitude and flux, deviation from the log relationship should correlate with color index BP-RP. The bluer the color index, the more scatter should exist in the observation.
+
+```{r}
+linear_reexpression <- function(df, title){
+  reex <- mutate(df, FRP.reex = FRP ^ (0.0001)) #reexpress col
+  
+  plot1 <- ggplot(reex, aes(FRP.reex, Gmag)) + geom_point(alpha=0.3) + ggtitle(paste(title, "- Re-expressed R Flux vs. Magnitude")) + xlab("Re-expressed Flux") + ylab("Magnitude") 
+
+  model1 <- lm(Gmag~FRP.reex, data=reex)
+  residuals1 <- model1$residuals
+  plot2 <- plot(model1)
+
+  
+  reex_r <- data.frame(reex, residuals1)
+  plot3 <- ggplot(reex_r, aes(residuals1, BP.RP)) + geom_point(alpha=0.3) + ggtitle(paste(title, "- Residuals from Linear Model vs. Color Index")) + xlab("Residuals") + ylab("Color Index")
+  corr1 <- cor(residuals1, reex$BP.RP)
+  
+  
+  print(plot1)
+  print(plot2)
+  print(plot3)
+  print(corr1)
+}
+```
+
+
+
+```{r}
+magflux_analysis <- function(df, title){
+  #narrow to only relevant columns
+  m_fl <- df[,c("Gmag", "FG", "FBP", "FRP", "BP.RP")] 
+  
+  mag_flux(m_fl, title)
+  
+  linear_reexpression(m_fl, title)
+}
+```
+
+
+
+Executing for the first sample:
+
+```{r}
+magflux_analysis(plane_cc, 'Plane')
+```
+
+Before looking at all of the results of this analysis, we note in the residuals from the linear reexpression, specifically in the "Residuals vs Leverage" plot, that there are a number of high-leverage outliers that are skewing the results. This is also evident in the "Residuals vs Fitted" plot as we see a cluster of points in the middle with just a few points on the right and left edges. Other samples are susceptible to skewed results due to outliers as well. Therefore, the following function will remove the Tukey outliers for each sample.
+
+```{r}
+remove_outliers <- function(df){
+  out1 <- find_outliers(df$FRP)
+  out2 <- find_outliers(df$Gmag)
+  unique_out <- unique(c(out1, out2))
+  df_new <- df[-unique_out,]
+  df_new
+}
+
+```
+
+Now we can re-assess for the plane sample.
+
+```{r}
+plane_new <- remove_outliers(plane_cc)
+magflux_analysis(plane_new, 'Plane')
+```
+
+In the Flux vs. Magnitude plot, the raw relationship between magnitude and flux seems to fit a log curve relatively well. The points seem to cling to the fit line, althought there is a trail of points below the line. However, the curvature of the line makes it difficult to see the goodness of fit in areas where there is a high density of points. In order to better analyze the goodness of fit, we re-express this relationship as a linear relationship.
+
+The linear reexpression of this relationship (Reexpressed R Flux vs. Magnitude) makes it easier to visualize of the goodness of fit. Take note that the data seems forms two separate lines that tightly straddle the fit line. Take note that the data seems forms two separate lines that tightly straddle the fit line.These lines are very distinct from one another, which leads us to believe that something else might be going in the data that might cause points to jump to one line or another. Without more subject matter expertise, it is hard to guess what this might be. This is an interesting point for further research.
+
+The Base R plots analyze the residuals of the linear fit. The first, "Residuals vs. Fitted", shows randomness in the spread of points, apart from the anomaly of the separation of two chunks of data (as discussed above). The normal QQ plot leads us to believe that the data may not be normally distributed. Given the context of the linear model, this is not concerning and does not undermine our analysis. The randomness shown on the "Scale-location" plot is a good sign. There are now only a small handful of high-leverage points on the "Residuals vs Leverage" plot, so they are unlikely to skew results. Furthermore, these points are not outliers. 
+
+Finally, the residuals of the linear reexpression correlate very highly with the color index with a correlation of 0.981.This high correlation is shown in the positive slope in the graph of the residuals vs. color index.
+
+
+Now to analyze the other two samples:
+
+```{r}
+mid_new <- remove_outliers(mid_cc)
+magflux_analysis(mid_new, 'Mid-plane')
+```
+
+
+In the Flux vs. Magnitude plot, the raw relationship between magnitude and flux seems to fit a log curve very well. The points seem to cling to the fit line, with points seeming to fall evenly above and below the line. However, the curvature of the line still makes it difficult to see the goodness of fit in areas where there is a high density of points. In order to better analyze the goodness of fit, we re-express this relationship as a linear relationship.
+
+The linear reexpression of this relationship (Reexpressed R Flux vs. Magnitude) makes it easier to visualize of the goodness of fit. Take note that the data seems forms two separate lines that tightly straddle the fit line. Take note that the issue with the data forming two separate lines does not occur here.
+
+The Base R plots analyze the residuals of the linear fit. The first, "Residuals vs. Fitted", shows randomness in the spread of points. This demonstrates homoskedasticity - or constant variance of residuals with variation in Flux. The normal QQ plot leads us to believe that the data likely is normally distributed. As above, this does not largely affect the analysis. The randomness shown on the "Scale-location" plot is a good. There do not seem to be any glaring high-leverage points on the "Residuals vs Leverage" plot. 
+
+Finally, the residuals of the linear reexpression correlate very highly with the color index with a correlation of 0.997. This high correlation is shown in the positive slope in the graph of the residuals vs. color index.
+
+
+
+```{r}
+perp_new <- remove_outliers(perp_cc)
+magflux_analysis(perp_new, 'Perpendicular')
+```
+
+The results from the perpendicular sample are nearly identical to those of the mid-plane sample.
+
+The Flux vs. Magnitude plot demonstrates a good fit to the log curve with no irregularities. The linear reexpression shows a strong fit as well. The residuals demonstrate homoskedasticity and otherwise do not show any red flags.The residuals of the linear reexpression correlate very highly with the color index with a correlation of 0.992.
+
+
+## Part 2: Magnitude and Error
+
+For part 2 of this analysis, I seek to understand which error term is a better predictor of magnitude. There are ten error terms that describe the level of error for the collection of 10 parameters. Generally, if error is high, it is likely that the star is very dim (high magnitude). Which error terms guide this relationship? 
+
+
+Here we do not expect the results to differ across samples, nor are we interested in a comparison. So, the combined data set will be used.
+
+
+```{r}
+head(all)
+all_err <- all[,c(15, 2,4,7,9,11,14,18,20,22,24)] #narrow to error columns
+head(all_err)
+```
+
+
+A regression tree will be used in order to visualize how which error terms have the greatest effect on magnitude.
+
+```{r}
+colnames(all_err)
+tree_err = tree(Gmag~.,all_err)
+summary(tree_err)
+```
+
+It appears that right ascension error, B, R and G flux errors were the most predictive of magnitude. 
+
+```{r}
+plot(tree_err)
+text(tree_err, pretty=0)
+```
+
+
+This tree has not yet been pruned. However, even if it had, it is hard to grasp wether the magnitude number is high or low based on the distribution of magnitudes. For easier interpretability, I will create a categorical variable indicating that the bottom third of the sorted magnitudes are "Bright", middle third are "Medium", and top third are "Dim".
+
+
+```{r}
+#create separations based on quantile
+unit <- length(na.omit(all_err$Gmag))/3
+sorted <- sort(na.omit(all_err$Gmag))
+bottom <- sorted[ceiling(unit)]
+top <- sorted[ceiling(2*unit)]
+
+#determine level variable by separations
+level = ifelse(all_err$Gmag <=bottom,"Bright",ifelse(all_err$Gmag <=top, "Medium", "Dim"))
+all_err_new <- data.frame(all_err ,level)
+tree_err1 <- tree(level ~. -Gmag, all_err_new)
+```
+
+
+```{r}
+summary(tree_err1)
+plot(tree_err1)
+text(tree_err1, pretty=0)
+title("Regression Tree: Predicting Magnitude using Error")
+```
+
+This tree is much easier to interpret. It appears that the flux errors are the biggest determining variables for whether the observation has a magnitude that is bright, medium, or dim. Now, I'll prune to remove redundant branches.
+
+
+```{r}
+pruned <- prune.misclass(tree_err1, best=4)
+summary(pruned)
+plot(pruned)
+text(pruned ,pretty =0)
+title("Pruned Regression Tree: Predicting Magnitude using Error")
+```
+
+This regression tree is very telling about which error terms play the largest role in predicting the magnitude. The G flux error plays a large role, being the sole determiner between whether a star is predicted to be Bright or Medium/Dim. All observations with G Flux error greater than 90.08 are predicted to be Bright. Of those that are not, those with B flux errors of less than 78.2045 are predicted to be Dim. Those with larger B flux errors could be Medium or Dim depending on B flux error and BP magnitude error. 
+
+## Part 3: Radial Velocity
+
+In part three of this analysis, I seek to analyze the distribution of the radial velocity. When this data set is narrowed to complete cases, it should limited to observations with magnitudes large enough to accurately measure motion. Therefore, we would not expect any other relationship between brightness and motion. Furthermore, we would expect to see that the distribution of radial velocities is normal or fits a normal Guassian curve.
+
+
+```{r}
+ggplot(all, aes(RV)) + geom_histogram() + ggtitle("Radial Velocity") #Yikes outliers
+head(all)
+```
+
+The histogram for radial velocity indicates that this variable may indeed be normally distributed, but outliers make it difficult to tell. Furthermore, histograms can be misleading at times because with an increase in count comes an increase in variability.
+
+
+Remove outliers and plot a new histogram:
+
+```{r}
+outliers <- find_outliers(all$RV)
+clean <- all[-outliers,]
+fivenum(clean$RV)
+
+ggplot(clean, aes(RV)) + geom_histogram(binwidth=8) + ggtitle("Histogram of Radial Velocities")
+```
+
+Removing outliers and using five number summary to determine a reasonable binwidth yields a much more explanatory histogram. While the distribution appears approximately normal, there are appears to be a slight left skew. However, it is difficult to determine whether this is a result of the higher variability associated with histogram bars of higher counts. To remove this dependency, I'll create a rootogram (use root frequencies).
+
+```{r}
+bins <-seq(-105, 65, 10)
+bin.mids <- (bins[-1]+bins[-length(bins)])/2
+ggplot(clean ,aes(RV))+geom_histogram(breaks = bins,fill = "white",color = "turquoise") + ggtitle("Radial Velocity")
+
+p <- ggplot(clean, aes(RV))+geom_histogram(breaks = bins)
+out <-ggplot_build(p)$data[[1]]
+select(out, count, x, xmin, xmax)
+ggplot(out,aes(x,sqrt(count)))+geom_col(fill = "white",color = "turquoise") + ggtitle("Radial Velocity - Rootogram")
+```
+
+
+This operation seems to stabilizes the variability of counts between high-count and low-count areas of the plot. While the curve is not centered at zero, a visual assessment indicates that the Radial Velocity follows a normal distribution.
+
+# Conclusion
+
+The question I sought to help answer in this analysis was the following:
+
+In what ways are the relationships between quantities measured by Gaia made evident in the data? 
+  How are well-understood dependencies represented in the data? 
+  In what ways can less-familiar relationships be expressed?
+  
+In part one, the analysis of the relationship between magnitude and flux demonstrated how a well-understood dependency is represented in the data. It is common knowledge among astronomers that there is a log relationship between magnitude in flux. My linear reexpression confirmed the validity of this relationship and highlighted how this well-understood relationship is expressed in new data collected from the Gaia space mission.
+
+In part two, the analysis of the relationship between magnitude and error highlighted branched off the well-known idea that the error in observation of stellar parameters is related to the magnitude of the star. However, this analysis branches into uncharted territory in exploring which error parameters best predict magnitude. 
+
+In part three, the distribution of radial velocity encompasses a topic that may be well known but is not well discussed to my knowledge. There is not a relationship between motion and brightness in this context, but it is unclear whether scientific interests has led researchers to prove a normal distribution. 
+It is clear that this analysis is extremely valuable in providing insight to the question at hand.
+
